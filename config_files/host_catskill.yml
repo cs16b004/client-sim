@@ -1,0 +1,5 @@
+host:
+  name: catskill
+  type: server
+  id: 4
+  target: [5]
