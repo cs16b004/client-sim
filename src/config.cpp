@@ -97,6 +97,7 @@ void Config::load_dpdk_yml(YAML::Node config) {
     burst_size = config["pkt_burst_size"].as<uint16_t>();
     report_interval_ = config["report_interval"].as<uint16_t>();
     rx_burst_size = config["rx_burst_size"].as<uint16_t>();
+    num_connections = config["num_clients"].as<uint16_t>();
 }
 
 void Config::load_cpu_yml(YAML::Node config) {
