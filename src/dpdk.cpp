@@ -7,6 +7,8 @@
 #include <rte_mbuf.h>
 #include <rte_prefetch.h>
 #include <rte_pmd_qdma.h>
+#include <rte_cycles.h>
+#include <rte_timer.h>
 
 #include <string>
 #include <sstream>
@@ -22,10 +24,9 @@
 #define DPDK_RX_DESC_SIZE           1024
 #define DPDK_TX_DESC_SIZE           1024
 
-#define DPDK_NUM_MBUFS              8192
+#define DPDK_NUM_MBUFS              8191
 #define DPDK_MBUF_CACHE_SIZE        250
-#define DPDK_RX_BURST_SIZE          64
-#define DPDK_TX_BURST_SIZE          1
+
 
 #define DPDK_RX_WRITEBACK_THRESH    64
 
@@ -42,6 +43,80 @@
 #define MAX_PATTERN_NUM		3
 #define MAX_ACTION_NUM		2
 
+#define MAX_SAMPLES 1000000
+
+
+static uint64_t raw_time(void) {
+    struct timespec tstart={0,0};
+    clock_gettime(CLOCK_MONOTONIC, &tstart);
+    uint64_t t = (uint64_t)(tstart.tv_sec*1.0e9 + tstart.tv_nsec);
+    return t;
+
+}
+
+static uint64_t time_now(uint64_t offset) {
+    return raw_time() - offset;
+}
+
+struct LatencyStats{
+    uint64_t samples[MAX_SAMPLES];
+    
+    double moving_avg = 0;
+    uint64_t sample_sum=0;
+    uint64_t min_latency = 0xffffffffffffffff;
+
+    uint64_t max_latency = 0;
+    uint64_t num_samples = 0;
+    uint64_t total_count=0;
+};
+
+static void add_latency(LatencyStats* st, uint64_t sample){
+        st->samples[st->num_samples % MAX_SAMPLES] = sample;
+
+        if(sample < st->min_latency){
+            st->min_latency = sample;
+        }
+        if(sample > st->max_latency){
+            st->max_latency = sample;
+        }
+
+        st->num_samples++;
+        if(st->num_samples < MAX_SAMPLES)
+            st->total_count = st->num_samples;
+        st->sample_sum +=sample;
+        st->moving_avg = st->moving_avg * ((float)(st->total_count - 1)/(float)st->total_count) + ((float)(sample) / (float)(st->total_count));
+        st->num_samples++;
+}
+ int cmpfunc(const void * a, const void *b) {
+        const uint64_t *a_ptr = (const uint64_t *)a;
+        const uint64_t *b_ptr = (const uint64_t *)b;
+        return (int)(*a_ptr - *b_ptr);
+    }
+static void dump_latencies(LatencyStats *dist) {
+    // sort the latencies
+   
+    if (dist->total_count <=0)
+        return;
+    uint64_t *arr = (uint64_t*) malloc(dist->total_count * sizeof(uint64_t));
+    if (arr == NULL) {
+        printf("Not able to allocate array to sort latencies\n");
+        exit(1);
+    }
+    for (size_t i = 0; i < dist->total_count; i++) {
+        arr[i] = dist->samples[i];
+    }
+    qsort(arr, dist->total_count, sizeof(uint64_t), cmpfunc);
+    uint64_t avg_latency = (dist->sample_sum) / (dist->num_samples);
+    uint64_t median = arr[(size_t)((double)dist->total_count * 0.50)];
+    uint64_t p99 = arr[(size_t)((double)dist->total_count * 0.99)];
+    uint64_t p999 = arr[(size_t)((double)dist->total_count * 0.999)];
+    printf("Stats:\n\t- Min latency: %u ns\n\t- Max latency: %u ns\n\t- Avg latency: %" PRIu64 " us", (unsigned)dist->min_latency, (unsigned)dist->max_latency, avg_latency);
+    printf("\n\t- Median latency: %u ns\n\t- p99 latency: %u ns\n\t- p999 latency: %u ns\n", (unsigned)median, (unsigned)p99, (unsigned)p999);
+    free((void *)arr);
+
+}
+
+
 
 const uint8_t CONNECT[64] = {   0x07,  // PKT Type Session Management 
                           0x02, // Session Request Type - Connect 
@@ -55,7 +130,7 @@ const uint8_t CONNECT[64] = {   0x07,  // PKT Type Session Management
                           0x00, 0x00, 0x00, 0x00, 0x00, 0x00               // Padding end
                     };
 
-const uint8_t RPC[89] = {       0x09, // PKT TYPE RR
+const uint8_t RPC[97] = {       0x09, // PKT TYPE RR
                         0x54, 0x00, 0x00, 0x00, // Request Size 84 
                         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // Future ID
                         0x03, 0x00, 0x00, 0x10, // RPC_ID
@@ -68,11 +143,84 @@ const uint8_t RPC[89] = {       0x09, // PKT TYPE RR
                         0x6f, 0x77, 0x66, 0x72, 0x78, 0x73, 0x6a, 0x79,
                         0x62, 0x6c, 0x64, 0x62, 0x65, 0x66, 0x73, 0x61,
                         0x72, 0x63, 0x62, 0x79, 0x6e, 0x65, 0x63, 0x64,
-                        0x79, 0x67, 0x67, 0x78, 0x78, 0x70, 0x6b, 0x6c };
+                        0x79, 0x67, 0x67, 0x78, 0x78, 0x70, 0x6b, 0x6c, 
+                        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
+
+const uint8_t RESPONSE[97] = {       0x09, // PKT TYPE RR
+                        0x54, 0x00, 0x00, 0x00, // Request Size 84 
+                        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // Future ID
+                        0x03, 0x00, 0x00, 0x10, // error_code
+                        
+                        0x40, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // String size
+                        0x6e, 0x77, 0x6c, 0x72, 0x62, 0x62, 0x6d, 0x71, // String
+                        0x62, 0x68, 0x63, 0x64, 0x61, 0x72, 0x7a, 0x6f,
+                        0x77, 0x6b, 0x6b, 0x79, 0x68, 0x69, 0x64, 0x64,
+                        0x71, 0x73, 0x63, 0x64, 0x78, 0x72, 0x6a, 0x6d,
+                        0x6f, 0x77, 0x66, 0x72, 0x78, 0x73, 0x6a, 0x79,
+                        0x62, 0x6c, 0x64, 0x62, 0x65, 0x66, 0x73, 0x61,
+                        0x72, 0x63, 0x62, 0x79, 0x6e, 0x65, 0x63, 0x64,
+                        0x79, 0x67, 0x67, 0x78, 0x78, 0x70, 0x6b, 0x6c, 
+                        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 // tx_timestamp;
+                        };
+
+
 
 const uint16_t DATA_OFFSET = sizeof(struct rte_ether_hdr) + sizeof(struct rte_ipv4_hdr) + sizeof(struct rte_udp_hdr);
 const uint16_t IPV4_OFFSET =  sizeof(struct rte_ether_hdr);
 const uint16_t UDP_OFFSET = sizeof(struct rte_ether_hdr) + sizeof(struct rte_ipv4_hdr);
+
+
+
+LatencyStats* st;
+
+static void print_packet(rte_mbuf* pkt){
+    // Extract Ethernet header
+        struct rte_ether_hdr *eth_hdr = rte_pktmbuf_mtod(pkt, struct rte_ether_hdr *);
+
+        struct rte_ether_addr temp = eth_hdr->src_addr;
+        eth_hdr->src_addr = eth_hdr->dst_addr;
+        eth_hdr->dst_addr = temp;
+
+    // Extract IP header
+        struct rte_ipv4_hdr *ip_hdr = (struct rte_ipv4_hdr *)(eth_hdr + IPV4_OFFSET);
+
+    // Extract UDP header
+        struct rte_udp_hdr *udp_hdr = (struct rte_udp_hdr *)(ip_hdr +  UDP_OFFSET);
+
+        log_debug("src: IP %s, size: %d", ipv4_to_string(ip_hdr->src_addr).c_str(), udp_hdr->dgram_len);
+
+        char* req = new char[1024];
+        uint8_t* pkt_data = rte_pktmbuf_mtod(pkt, uint8_t*);
+        int j=0;
+               
+        for(int i=  (sizeof(struct rte_ether_hdr) + sizeof(struct rte_ipv4_hdr) + sizeof(struct rte_udp_hdr));
+                        i < udp_hdr->dgram_len; i++){
+                  
+            sprintf(req+j,"%02x ", pkt_data[i]);
+            j+=3;   
+            if(j%25==0){
+                req[j] = '\n';
+                j++;
+            } 
+        }
+        req[j] = 0;
+        log_info("Packet data: %s",req);
+
+
+}
+
+void parse_packet(rte_mbuf* pkt, uint64_t* txts, uint8_t* pkt_type){
+
+            uint8_t* pkt_ptr = rte_pktmbuf_mtod(pkt, uint8_t*);
+            //struct rte_ipv4_hdr *ip_hdr = (struct rte_ipv4_hdr *)(((struct rte_ether_hdr *)pkt_ptr) + IPV4_OFFSET);
+            //log_debug("PKt size %d", ip_hdr->total_length);
+            uint8_t* dataptr = pkt_ptr + DATA_OFFSET;
+           
+            *pkt_type = *dataptr;
+            *txts = *((uint64_t*) (dataptr + 89));
+
+
+}
 
 static void inline swap_udp_addresses(struct rte_mbuf *pkt) {
     // Extract Ethernet header
@@ -105,43 +253,42 @@ int Dpdk::dpdk_rx_loop(void* arg) {
     Config* conf = Config::get_config();
    const uint16_t burst_size = conf->rx_burst_size;
    log_info("Launching rx thread %d, on lcore: %d, id counter %d on cpu %d",info->thread_id_, rte_lcore_id(),info->id_counter_,sched_getcpu());
+    uint64_t txts;
+    uint8_t pkt_type;
+    rte_mbuf** buf = new rte_mbuf*[burst_size];
+
+    uint16_t qid = info->queue_id_;
+    uint16_t port_id = info->port_id_;
+    uint64_t now;
     while(!info->dpdk_th->force_quit){
         rte_prefetch0(info->buf);
-        num_rx  = rte_eth_rx_burst(info->port_id_, info->queue_id_, info->buf,burst_size);
-        if(num_rx > burst_size){
-            log_info("NUM RX GREATER THAN BURST SIZE: %d,burst %d",num_rx,burst_size);
-        }
+        num_rx  = rte_eth_rx_burst(port_id, qid, buf,burst_size);
+        now = raw_time();
         //log_debug("Number receievd %d",num_rx);
         if(num_rx > 0 ){
 
         info->rcv_count_+=num_rx;
-        // Send the packets back if server;
-        // calculate latency if generator;
-            if(conf->host_type_ == Config::SERVER){
-                for(int i=0;i<num_rx;i++){
-                    swap_udp_addresses(info->buf[i]);
-                    
-                    #ifdef LOG_LEVEL_AS_DEBUG
-                    uint8_t* pkt_ptr = rte_pktmbuf_mtod(info->buf[i],uint8_t*);
-                    rte_ether_hdr* eth_hdr = reinterpret_cast<rte_ether_hdr*>(info->buf[i]);
-                    rte_ipv4_hdr* ipv4_hdr = reinterpret_cast<rte_ipv4_hdr*>(pkt_ptr+ sizeof(rte_ether_hdr));
-                    log_debug("Sending received packets, mac: %s, dst_ip: %s",
-                    mac_to_string((eth_hdr->dst_addr).addr_bytes).c_str(), 
-                    ipv4_to_string(ipv4_hdr->dst_addr).c_str());
-                    #endif
+        
+        for(int i=0;i<num_rx;i++){
+            
+            parse_packet(buf[i], &txts, &pkt_type);
+          //  print_packet(buf[i]);
+            if(unlikely(pkt_type != 0x09)){
+                
+                continue;
             }
+            
+            
+            add_latency(st, now-txts);
+            //log_debug("TXTS: %llu", txts);
+            rte_pktmbuf_free(buf[i]);
 
-            num_tx = rte_eth_tx_burst(info->port_id_,info->queue_id_,info->buf,num_rx);
-            info->snd_count_+=num_tx;
-            for (uint16_t j = num_tx; j < num_rx; j++) {
-                rte_pktmbuf_free(info->buf[j]);
-            }
-        }else{
-             for(int i=0;i<num_rx;i++){
+            //rte_get_timer_hz
 
-                rte_pktmbuf_free(info->buf[i]);
-             }
+            
+            
         }
+        
         }
         rte_prefetch0(info->buf);
 
@@ -197,7 +344,8 @@ int Dpdk::dpdk_stat_loop(void *arg){
             
         }
      
-        log_info("Total Packets sent: %lld, Total received: %lld, rate %f", total_snd_count, total_rcv_count, total_snd_count*1.0/(conf->report_interval_/1000));
+        log_info("Total RPCs sent: %lld, Total reply received: %lld, rate %f", total_snd_count, total_rcv_count, total_snd_count*1.0/(conf->report_interval_/1000));
+        dump_latencies(st);
         total_snd_count = 0;
         total_rcv_count = 0;
    
@@ -228,8 +376,19 @@ int Dpdk::dpdk_tx_loop(void* arg) {
    // Connection Assumed 
    int ret;
    int tx_count;
-    log_info("Launching tx thread %d, on lcore: %d, id counter %d, burst_size %d, on cpu %d",info->thread_id_, rte_lcore_id(),info->id_counter_,burst_size, sched_getcpu());
-    while(!info->force_quit){
+   log_info("Launching tx thread %d, on lcore: %d, id counter %d, burst_size %d, on cpu %d",info->thread_id_, rte_lcore_id(),info->id_counter_,burst_size, sched_getcpu());
+   
+   uint64_t intersend_time = 1e9 / conf->rpc_rate;
+   uint64_t cycle_wait = intersend_time * rte_get_timer_hz() / (1e9); 
+  
+
+   uint16_t qid = info->queue_id_;
+   uint16_t port_id = info->port_id_;
+
+
+    rte_mbuf* pkt;
+    uint64_t last_sent = rte_get_timer_cycles();
+   while(!info->force_quit){
         
         //rte_prefetch0(info->buf);
         //if(rand() % 10 == 0)
@@ -245,12 +404,21 @@ int Dpdk::dpdk_tx_loop(void* arg) {
         //     info->id_counter_++;
         // }
        // log_debug("PKt Address while sending %p",&(info->buf[0]));
+       
+       
        for(int i=0;i<conn_len;i++){
-            tx_count = rte_eth_tx_burst(info->port_id_,info->queue_id_,con_arr[i]->buf,conf->burst_size);
-            if (unlikely(tx_count < 0))
-                log_error("Tx couldn't send\n");   
-            for (uint16_t j = tx_count; j < conf->burst_size; j++) {
-                rte_pktmbuf_free(con_arr[i]->buf[j]);
+            while (((last_sent + cycle_wait) >= rte_get_timer_cycles())) {
+                ;
+            }
+            tx_count = 0;
+            while(tx_count < 1){
+                pkt = con_arr[i]->buf[0];
+                uint8_t* data_ptr = rte_pktmbuf_mtod(pkt,uint8_t*);
+
+                data_ptr += DATA_OFFSET + 89;
+                *((uint64_t*)data_ptr) = raw_time();
+                tx_count = rte_eth_tx_burst(port_id, qid,&pkt,1);
+                last_sent = rte_get_timer_cycles();
             }
             info->snd_count_+= std::max(tx_count,0);
         }
@@ -348,7 +516,7 @@ void Dpdk::init_dpdk_main_thread(const char* argv_str) {
         conn_arr[i] = new Connection(src_addr,dest_addr);
     }
     //
-
+    st = new LatencyStats();
     uint16_t portid;
     RTE_ETH_FOREACH_DEV(portid) {
        
