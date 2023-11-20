@@ -1,4 +1,3 @@
-
 #include <cstdint>
 #include <rte_eal.h>
 #include <rte_ethdev.h>
@@ -17,10 +16,10 @@
 #include "dpdkdef.hpp"
 #include "dpdk.hpp"
 #include <sched.h>
-
+#include<fstream>
 #include <unistd.h>
 #include <stdlib.h>
-
+#include<filesystem>
 #define DPDK_RX_DESC_SIZE           1024
 #define DPDK_TX_DESC_SIZE           1024
 
@@ -83,7 +82,7 @@ static void add_latency(LatencyStats* st, uint64_t sample){
         st->num_samples++;
         if(st->num_samples < MAX_SAMPLES)
             st->total_count = st->num_samples;
-        st->sample_sum +=sample;
+        st->sample_sum += sample;
         st->moving_avg = st->moving_avg * ((float)(st->total_count - 1)/(float)st->total_count) + ((float)(sample) / (float)(st->total_count));
         st->num_samples++;
 }
@@ -92,27 +91,47 @@ static void add_latency(LatencyStats* st, uint64_t sample){
         const uint64_t *b_ptr = (const uint64_t *)b;
         return (int)(*a_ptr - *b_ptr);
     }
-static void dump_latencies(LatencyStats *dist) {
+static void dump_latencies(LatencyStats *dist, double rate) {
     // sort the latencies
    
     if (dist->total_count <=0)
         return;
-    uint64_t *arr = (uint64_t*) malloc(dist->total_count * sizeof(uint64_t));
+    uint32_t tot_count = dist->total_count;
+    uint64_t *arr = (uint64_t*) malloc(tot_count * sizeof(uint64_t));
     if (arr == NULL) {
         printf("Not able to allocate array to sort latencies\n");
         exit(1);
     }
-    for (size_t i = 0; i < dist->total_count; i++) {
+    for (size_t i = 0; i < tot_count; i++) {
         arr[i] = dist->samples[i];
     }
-    qsort(arr, dist->total_count, sizeof(uint64_t), cmpfunc);
+    qsort(arr, tot_count, sizeof(uint64_t), cmpfunc);
     uint64_t avg_latency = (dist->sample_sum) / (dist->num_samples);
-    uint64_t median = arr[(size_t)((double)dist->total_count * 0.50)];
-    uint64_t p99 = arr[(size_t)((double)dist->total_count * 0.99)];
-    uint64_t p999 = arr[(size_t)((double)dist->total_count * 0.999)];
+    uint64_t median = arr[(size_t)((double)tot_count * 0.50)];
+    uint64_t p99 = arr[(size_t)((double)tot_count * 0.99)];
+    uint64_t p999 = arr[(size_t)((double)tot_count * 0.999)];
     printf("Stats:\n\t- Min latency: %u ns\n\t- Max latency: %u ns\n\t- Avg latency: %" PRIu64 " us", (unsigned)dist->min_latency, (unsigned)dist->max_latency, avg_latency);
     printf("\n\t- Median latency: %u ns\n\t- p99 latency: %u ns\n\t- p999 latency: %u ns\n", (unsigned)median, (unsigned)p99, (unsigned)p999);
-    free((void *)arr);
+
+    if (! std::filesystem::exists("data/latency.csv")) {
+        std::ofstream csvFile("data/latency.csv");
+        if (!csvFile.is_open()) {
+            std::cerr << "Failed to open CSV file" << std::endl;
+            exit(EXIT_FAILURE);
+        }
+        csvFile << "Min latency (ns),Max latency (ns),Avg latency (us),Median latency (ns),p99 latency (ns),p999 latency (ns),moving avg (ns),rpc_rate (rpc/sec)\n";
+        csvFile.close();
+    }
+    
+    
+    std::ofstream csvFile("data/latency.csv", std::ios::app); // Open file in append mode
+    if (!csvFile.is_open()) {
+        std::cerr << "Failed to open CSV file" << std::endl;
+        exit(EXIT_FAILURE);
+    }
+
+    csvFile << dist->min_latency << "," << dist->max_latency << "," << avg_latency << "," << median << "," << p99 << "," << p999 <<","<< dist->moving_avg <<","<< rate <<"\n";
+    csvFile.close();
 
 }
 
@@ -345,7 +364,8 @@ int Dpdk::dpdk_stat_loop(void *arg){
         }
      
         log_info("Total RPCs sent: %lld, Total reply received: %lld, rate %f", total_snd_count, total_rcv_count, total_snd_count*1.0/(conf->report_interval_/1000));
-        dump_latencies(st);
+        //write to a csv file
+        dump_latencies(st,total_rcv_count*1.0/(conf->report_interval_/1000));
         total_snd_count = 0;
         total_rcv_count = 0;
    
