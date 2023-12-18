@@ -44,6 +44,7 @@
 
 #define MAX_SAMPLES 1000000
 
+Config* g_conf =nullptr;
 
 static uint64_t raw_time(void) {
     struct timespec tstart={0,0};
@@ -119,7 +120,7 @@ static void dump_latencies(LatencyStats *dist, double rate) {
             std::cerr << "Failed to open CSV file" << std::endl;
             exit(EXIT_FAILURE);
         }
-        csvFile << "Min latency (ns),Max latency (ns),Avg latency (us),Median latency (ns),p99 latency (ns),p999 latency (ns),moving avg (ns),rpc_rate (rpc/sec)\n";
+        csvFile << "Min latency (ns),Max latency (ns),Avg latency (us),Median latency (ns),p99 latency (ns),p999 latency (ns),moving avg (ns),rpc_rate (rpc/sec), set_rpc_rate\n";
         csvFile.close();
     }
     
@@ -130,7 +131,7 @@ static void dump_latencies(LatencyStats *dist, double rate) {
         exit(EXIT_FAILURE);
     }
 
-    csvFile << dist->min_latency << "," << dist->max_latency << "," << avg_latency << "," << median << "," << p99 << "," << p999 <<","<< dist->moving_avg <<","<< rate <<"\n";
+    csvFile << dist->min_latency << "," << dist->max_latency << "," << avg_latency << "," << median << "," << p99 << "," << p999 <<","<< dist->moving_avg <<","<< rate <<","<< g_conf->rpc_rate<<"\n";
     csvFile.close();
 
 }
@@ -267,6 +268,7 @@ static void inline swap_udp_addresses(struct rte_mbuf *pkt) {
 }
 
 int Dpdk::dpdk_rx_loop(void* arg) {
+    
    dpdk_thread_info* info = (dpdk_thread_info*) arg ;
    uint16_t num_rx=0,num_tx=0;
     Config* conf = Config::get_config();
@@ -383,7 +385,7 @@ int Dpdk::dpdk_tx_loop(void* arg) {
    
     
    Config* conf = Config::get_config();
-
+    g_conf = conf;
 
    for(int i=0; i< conn_len;i++){
     con_arr[i]->make_headers();
