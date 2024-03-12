@@ -111,7 +111,7 @@ static void dump_latencies(LatencyStats *dist, double rate) {
     uint64_t median = arr[(size_t)((double)tot_count * 0.50)];
     uint64_t p99 = arr[(size_t)((double)tot_count * 0.99)];
     uint64_t p999 = arr[(size_t)((double)tot_count * 0.999)];
-    printf("Stats:\n\t- Min latency: %u ns\n\t- Max latency: %u ns\n\t- Avg latency: %" PRIu64 " us", (unsigned)dist->min_latency, (unsigned)dist->max_latency, avg_latency);
+    printf("Stats:\n\t- Min latency: %u ns" PRIu64 " us", (unsigned)dist->min_latency);
     printf("\n\t- Median latency: %u ns\n\t- p99 latency: %u ns\n\t- p999 latency: %u ns\n", (unsigned)median, (unsigned)p99, (unsigned)p999);
 
     if (! std::filesystem::exists("data/latency.csv")) {
@@ -120,7 +120,7 @@ static void dump_latencies(LatencyStats *dist, double rate) {
             std::cerr << "Failed to open CSV file" << std::endl;
             exit(EXIT_FAILURE);
         }
-        csvFile << "Min latency (ns),Max latency (ns),Avg latency (us),Median latency (ns),p99 latency (ns),p999 latency (ns),moving avg (ns),rpc_rate (rpc/sec), set_rpc_rate\n";
+        csvFile << "Min latency (ns),Median latency (ns),p99 latency (ns),p999 latency (ns),rpc_rate (rpc/sec), set_rpc_rate\n";
         csvFile.close();
     }
     
@@ -131,7 +131,7 @@ static void dump_latencies(LatencyStats *dist, double rate) {
         exit(EXIT_FAILURE);
     }
 
-    csvFile << dist->min_latency << "," << dist->max_latency << "," << avg_latency << "," << median << "," << p99 << "," << p999 <<","<< dist->moving_avg <<","<< rate <<","<< g_conf->rpc_rate<<"\n";
+    csvFile << dist->min_latency << "," << median << "," << p99 << "," << p999 <<","<< rate <<","<< g_conf->rpc_rate<<"\n";
     csvFile.close();
 
 }
@@ -150,7 +150,7 @@ const uint8_t CONNECT[64] = {   0x07,  // PKT Type Session Management
                           0x00, 0x00, 0x00, 0x00, 0x00, 0x00               // Padding end
                     };
 
-const uint8_t RPC[97] = {       0x09, // PKT TYPE RR
+const uint8_t RPC[97] = {       0x0a, // PKT TYPE RR_BG
                         0x54, 0x00, 0x00, 0x00, // Request Size 84 
                         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // Future ID
                         0x03, 0x00, 0x00, 0x10, // RPC_ID
