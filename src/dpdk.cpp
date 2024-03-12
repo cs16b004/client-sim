@@ -196,25 +196,25 @@ LatencyStats* st;
 static void print_packet(rte_mbuf* pkt){
     // Extract Ethernet header
         struct rte_ether_hdr *eth_hdr = rte_pktmbuf_mtod(pkt, struct rte_ether_hdr *);
-
+        uint8_t* pkt_ptr = rte_pktmbuf_mtod(pkt,uint8_t*);
         struct rte_ether_addr temp = eth_hdr->src_addr;
         eth_hdr->src_addr = eth_hdr->dst_addr;
         eth_hdr->dst_addr = temp;
 
     // Extract IP header
-        struct rte_ipv4_hdr *ip_hdr = (struct rte_ipv4_hdr *)(eth_hdr + IPV4_OFFSET);
+        struct rte_ipv4_hdr *ip_hdr = (struct rte_ipv4_hdr *)(pkt_ptr + IPV4_OFFSET);
 
     // Extract UDP header
-        struct rte_udp_hdr *udp_hdr = (struct rte_udp_hdr *)(ip_hdr +  UDP_OFFSET);
+        struct rte_udp_hdr *udp_hdr = (struct rte_udp_hdr *)(pkt_ptr +  UDP_OFFSET);
 
-        log_debug("src: IP %s, size: %d", ipv4_to_string(ip_hdr->src_addr).c_str(), udp_hdr->dgram_len);
+        log_debug("src: IP %s, size: %d", ipv4_to_string(ip_hdr->src_addr).c_str(), ntohs(udp_hdr->dgram_len));
 
         char* req = new char[1024];
         uint8_t* pkt_data = rte_pktmbuf_mtod(pkt, uint8_t*);
         int j=0;
                
         for(int i=  (sizeof(struct rte_ether_hdr) + sizeof(struct rte_ipv4_hdr) + sizeof(struct rte_udp_hdr));
-                        i < udp_hdr->dgram_len; i++){
+                        i < ntohs(udp_hdr->dgram_len); i++){
                   
             sprintf(req+j,"%02x ", pkt_data[i]);
             j+=3;   
@@ -293,8 +293,8 @@ int Dpdk::dpdk_rx_loop(void* arg) {
         for(int i=0;i<num_rx;i++){
             
             parse_packet(buf[i], &txts, &pkt_type);
-          //  print_packet(buf[i]);
-            if(unlikely(pkt_type != 0x09)){
+            //print_packet(buf[i]);
+            if(unlikely(pkt_type < 0x09 )){
                 
                 continue;
             }
