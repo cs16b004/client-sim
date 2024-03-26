@@ -120,7 +120,7 @@ static void dump_latencies(LatencyStats *dist, double rate) {
             std::cerr << "Failed to open CSV file" << std::endl;
             exit(EXIT_FAILURE);
         }
-        csvFile << "Min latency (ns),Max latency (ns),Avg latency (us),Median latency (ns),p99 latency (ns),p999 latency (ns),moving avg (ns),rpc_rate (rpc/sec), set_rpc_rate\n";
+        csvFile << "min_latency,p50_latency,p99_latency	p999_latency,rpc_rate,set_rpc_rate\n";
         csvFile.close();
     }
     
@@ -131,7 +131,7 @@ static void dump_latencies(LatencyStats *dist, double rate) {
         exit(EXIT_FAILURE);
     }
 
-    csvFile << dist->min_latency << "," << dist->max_latency << "," << avg_latency << "," << median << "," << p99 << "," << p999 <<","<< dist->moving_avg <<","<< rate <<","<< g_conf->rpc_rate<<"\n";
+    csvFile << dist->min_latency << "," << median << "," << p99 << "," << p999 <<"," <<","<< rate <<","<< g_conf->rpc_rate<<"\n";
     csvFile.close();
 
 }
