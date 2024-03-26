@@ -7,8 +7,9 @@ dpdk:
   pkt_size: 97
   pkt_burst_size: 32
   rx_burst_size: 32
-  report_interval: 6000 #report interval in milliseconds
+  report_interval: 2000 #report interval in milliseconds
   num_clients: 1
   option: ./server -a e3:00.0 -d librte_net_mlx5.so -d librte_mempool_ring.so -l 32-64
-  rpc_rate: 10
+  rpc_rate: 2800000
+  exp_name: latencyBG
   # option: ./client -a 0000:01:00.0,dv_flow_en=0,rxq_cqe_comp_en=0

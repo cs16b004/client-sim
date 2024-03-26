@@ -31,7 +31,7 @@ network:
 
   - greenport:
       id: 5
-      mac: 0c:42:a1:8e:e0:e6
+      mac: 9c:dc:71:42:46:00
       ip: 172.19.0.122
       port: 8501
   - brooklyn:

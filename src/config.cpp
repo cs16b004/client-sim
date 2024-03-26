@@ -99,6 +99,7 @@ void Config::load_dpdk_yml(YAML::Node config) {
     rx_burst_size = config["rx_burst_size"].as<uint16_t>();
     num_connections = config["num_clients"].as<uint16_t>();
     rpc_rate = config["rpc_rate"].as<uint32_t>();
+    exp_name = config["exp_name"].as<std::string>();
 }
 
 void Config::load_cpu_yml(YAML::Node config) {

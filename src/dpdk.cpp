@@ -19,6 +19,7 @@
 #include<fstream>
 #include <unistd.h>
 #include <stdlib.h>
+
 #include<filesystem>
 #define DPDK_RX_DESC_SIZE           1024
 #define DPDK_TX_DESC_SIZE           1024
@@ -68,6 +69,15 @@ struct LatencyStats{
     uint64_t max_latency = 0;
     uint64_t num_samples = 0;
     uint64_t total_count=0;
+    void print(){
+        std::cout<<"Num Samples: "<<total_count<<std::endl;
+        std::cout<<std::endl;
+
+        for(int i=0;i<total_count; i++){
+            std::cout<<samples[i]<<" ";
+        }
+        std::cout<<std::endl;
+    }
 };
 
 static void add_latency(LatencyStats* st, uint64_t sample){
@@ -81,17 +91,16 @@ static void add_latency(LatencyStats* st, uint64_t sample){
         }
 
         st->num_samples++;
-        if(st->num_samples < MAX_SAMPLES)
+        if(st->num_samples <= MAX_SAMPLES)
             st->total_count = st->num_samples;
         st->sample_sum += sample;
-        st->moving_avg = st->moving_avg * ((float)(st->total_count - 1)/(float)st->total_count) + ((float)(sample) / (float)(st->total_count));
-        st->num_samples++;
 }
  int cmpfunc(const void * a, const void *b) {
         const uint64_t *a_ptr = (const uint64_t *)a;
         const uint64_t *b_ptr = (const uint64_t *)b;
         return (int)(*a_ptr - *b_ptr);
     }
+
 static void dump_latencies(LatencyStats *dist, double rate) {
     // sort the latencies
    
@@ -107,25 +116,28 @@ static void dump_latencies(LatencyStats *dist, double rate) {
         arr[i] = dist->samples[i];
     }
     qsort(arr, tot_count, sizeof(uint64_t), cmpfunc);
-    uint64_t avg_latency = (dist->sample_sum) / (dist->num_samples);
+   // dist->print();
+   // uint64_t avg_latency = (dist->sample_sum) / (dist->num_samples);
     uint64_t median = arr[(size_t)((double)tot_count * 0.50)];
     uint64_t p99 = arr[(size_t)((double)tot_count * 0.99)];
     uint64_t p999 = arr[(size_t)((double)tot_count * 0.999)];
-    printf("Stats:\n\t- Min latency: %u ns" PRIu64 " us", (unsigned)dist->min_latency);
+    printf("Stats:\n\t- Min latency: %u ns", (unsigned)dist->min_latency);
     printf("\n\t- Median latency: %u ns\n\t- p99 latency: %u ns\n\t- p999 latency: %u ns\n", (unsigned)median, (unsigned)p99, (unsigned)p999);
-
-    if (! std::filesystem::exists("data/latency.csv")) {
-        std::ofstream csvFile("data/latency.csv");
+    char data_file[50];
+    sprintf(data_file, "data/_%s.csv",Config::get_config()->exp_name.c_str());
+    
+    if (! std::filesystem::exists(data_file)) {
+        std::ofstream csvFile(data_file);
         if (!csvFile.is_open()) {
             std::cerr << "Failed to open CSV file" << std::endl;
             exit(EXIT_FAILURE);
         }
-        csvFile << "Min latency (ns),Median latency (ns),p99 latency (ns),p999 latency (ns),rpc_rate (rpc/sec), set_rpc_rate\n";
+        csvFile << "min_latency,p50_latency,p99_latency,p999_latency,rpc_rate,set_rpc_rate\n";
         csvFile.close();
     }
     
     
-    std::ofstream csvFile("data/latency.csv", std::ios::app); // Open file in append mode
+    std::ofstream csvFile(data_file, std::ios::app); // Open file in append mode
     if (!csvFile.is_open()) {
         std::cerr << "Failed to open CSV file" << std::endl;
         exit(EXIT_FAILURE);
@@ -133,12 +145,13 @@ static void dump_latencies(LatencyStats *dist, double rate) {
 
     csvFile << dist->min_latency << "," << median << "," << p99 << "," << p999 <<","<< rate <<","<< g_conf->rpc_rate<<"\n";
     csvFile.close();
+    free(arr);
 
 }
 
 
 
-const uint8_t CONNECT[64] = {   0x07,  // PKT Type Session Management 
+const uint8_t CONNECT[64] = { 0x07,  // PKT Type Session Management 
                           0x02, // Session Request Type - Connect 
                           0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,  //Padding Begin
                           0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
@@ -147,10 +160,21 @@ const uint8_t CONNECT[64] = {   0x07,  // PKT Type Session Management
                           0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
                           0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
                           0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                          0x00, 0x00, 0x00, 0x00, 0x00, 0x00               // Padding end
+                          0x00, 0x00, 0x00, 0x00, 0x00, 0x00              // Padding end
+                    };
+const uint8_t ACK[64] = { 0x07,  // PKT Type Session Management 
+                          0x03, // Session Request Type - Ack 
+                          0xe4, 0x25, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,  //Padding Begin
+                          0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                          0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 
+                          0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                          0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                          0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                          0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                          0x00, 0x00, 0x00, 0x00, 0x00, 0x00              // Padding end
                     };
 
-const uint8_t RPC[97] = {       0x0a, // PKT TYPE RR_BG
+const uint8_t RPC[97] = { 0xa, // PKT TYPE RR
                         0x54, 0x00, 0x00, 0x00, // Request Size 84 
                         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // Future ID
                         0x03, 0x00, 0x00, 0x10, // RPC_ID
@@ -166,7 +190,7 @@ const uint8_t RPC[97] = {       0x0a, // PKT TYPE RR_BG
                         0x79, 0x67, 0x67, 0x78, 0x78, 0x70, 0x6b, 0x6c, 
                         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
 
-const uint8_t RESPONSE[97] = {       0x09, // PKT TYPE RR
+const uint8_t RESPONSE[97] = { 0x0a, // PKT TYPE RR
                         0x54, 0x00, 0x00, 0x00, // Request Size 84 
                         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // Future ID
                         0x03, 0x00, 0x00, 0x10, // error_code
@@ -207,14 +231,14 @@ static void print_packet(rte_mbuf* pkt){
     // Extract UDP header
         struct rte_udp_hdr *udp_hdr = (struct rte_udp_hdr *)(pkt_ptr +  UDP_OFFSET);
 
-        log_debug("src: IP %s, size: %d", ipv4_to_string(ip_hdr->src_addr).c_str(), ntohs(udp_hdr->dgram_len));
+        log_info("src: IP %s, size: %d", ipv4_to_string(ip_hdr->src_addr).c_str(), ntohs(udp_hdr->dgram_len));
 
-        char* req = new char[1024];
+        char* req = new char[2048];
         uint8_t* pkt_data = rte_pktmbuf_mtod(pkt, uint8_t*);
         int j=0;
-               
+        int sz = 200 < (ntohs(udp_hdr->dgram_len) + sizeof(struct rte_ether_hdr) + sizeof(struct rte_ipv4_hdr))? 200: (ntohs(udp_hdr->dgram_len) + sizeof(struct rte_ether_hdr) + sizeof(struct rte_ipv4_hdr));
         for(int i=  (sizeof(struct rte_ether_hdr) + sizeof(struct rte_ipv4_hdr) + sizeof(struct rte_udp_hdr));
-                        i < ntohs(udp_hdr->dgram_len); i++){
+                        i < sz; i++){
                   
             sprintf(req+j,"%02x ", pkt_data[i]);
             j+=3;   
@@ -224,7 +248,7 @@ static void print_packet(rte_mbuf* pkt){
             } 
         }
         req[j] = 0;
-        log_info("Packet data: %s",req);
+        log_info("Packet data:\n %s",req);
 
 
 }
@@ -238,6 +262,7 @@ void parse_packet(rte_mbuf* pkt, uint64_t* txts, uint8_t* pkt_type){
            
             *pkt_type = *dataptr;
             *txts = *((uint64_t*) (dataptr + 89));
+           // log_info("ts received %lu", *txts);
 
 
 }
@@ -293,7 +318,7 @@ int Dpdk::dpdk_rx_loop(void* arg) {
         for(int i=0;i<num_rx;i++){
             
             parse_packet(buf[i], &txts, &pkt_type);
-            //print_packet(buf[i]);
+          //  print_packet(buf[i]);
             if(unlikely(pkt_type < 0x09 )){
                 
                 continue;
@@ -365,7 +390,7 @@ int Dpdk::dpdk_stat_loop(void *arg){
             
         }
      
-        log_info("Total RPCs sent: %lld, Total reply received: %lld, rate %f", total_snd_count, total_rcv_count, total_snd_count*1.0/(conf->report_interval_/1000));
+        log_info("Total RPCs sent: %lld, Total reply received: %lld, rate %f", total_snd_count, total_rcv_count, total_rcv_count*1.0/(conf->report_interval_/1000));
         //write to a csv file
         dump_latencies(st,total_rcv_count*1.0/(conf->report_interval_/1000));
         total_snd_count = 0;
@@ -393,6 +418,11 @@ int Dpdk::dpdk_tx_loop(void* arg) {
    for(int i=0; i < conn_len; i++ ){
     rte_eth_tx_burst(info->port_id_,info->queue_id_,&(con_arr[i]->connection_req_pkt),1);
     sleep(1);
+   }
+   for(int i=0; i< conn_len;i++){
+    con_arr[i]->src_addr.port = 9000;
+    con_arr[i]->dest_addr.port = 8700;
+    con_arr[i]->make_headers();
    }
 
    // Connection Assumed 
@@ -439,6 +469,8 @@ int Dpdk::dpdk_tx_loop(void* arg) {
 
                 data_ptr += DATA_OFFSET + 89;
                 *((uint64_t*)data_ptr) = raw_time();
+                // log_debug("Sent TS %lu", *((uint64_t*)data_ptr));
+                // print_packet(pkt);
                 tx_count = rte_eth_tx_burst(port_id, qid,&pkt,1);
                 last_sent = rte_get_timer_cycles();
             }
@@ -1049,7 +1081,7 @@ void Dpdk::install_flow_rule(size_t phy_port){
     memset(&udp_mask, 0, sizeof(struct rte_flow_item_udp));
     memset(&udp_spec, 0, sizeof(struct rte_flow_item_udp));
     udp_spec.hdr.dst_port = RTE_BE16(8501);
-    udp_mask.hdr.dst_port = RTE_BE16(0xffff);
+    udp_mask.hdr.dst_port = RTE_BE16(0x0);
     /* TODO: Change this to support leader change */
     udp_spec.hdr.src_port = 0;
     udp_mask.hdr.src_port = RTE_BE16(0);
